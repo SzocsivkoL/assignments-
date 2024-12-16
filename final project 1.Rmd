@@ -1,9 +1,10 @@
 ---
-title: "final project"
-output: html_document
-date: "2024-12-13"
-editor_options: 
-  chunk_output_type: console 
+title: "Final Project: Predicting IMDb Ratings for Scooby-Doo Movies"
+output:
+  html_document:
+    df_print: paged
+knit: true
+output_file: index.html
 ---
 
 ```{r setup, include=FALSE}
@@ -25,7 +26,8 @@ library(knitr)
 
 
 ```{r}
-# Get the Data
+# I will work with Scooby Doo Data from tidy tuesday. I want to analise the influence of different predictors to the movies' imdb ratings. 
+#Get the Data
 
 scoobydoo <- read.csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2021/2021-07-13/scoobydoo.csv', stringsAsFactors = FALSE)
 ```
