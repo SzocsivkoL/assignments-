@@ -1,0 +1,439 @@
+---
+title: "final project"
+output: html_document
+date: "2024-12-13"
+editor_options: 
+  chunk_output_type: console 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.show = "asis", inline = FALSE)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(car)        
+library(lmtest)     
+library (readxl)
+library (ggplot2)
+library(stargazer)
+library(knitr)
+
+
+```
+
+
+
+```{r}
+# Get the Data
+
+scoobydoo <- read.csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2021/2021-07-13/scoobydoo.csv', stringsAsFactors = FALSE)
+```
+
+
+```{r}
+# I select Scooby Doo movies
+
+summary(is.na(scoobydoo))
+str(scoobydoo)
+scoobydoo_movies <- scoobydoo %>%
+  filter(format == "Movie")
+```
+
+
+```{r}
+
+# Selecting variables I want to work with: the imdb ratings, network and date when the cartoon is aired, monsters, culprits and suspects amount in each cartoon.The title is only important to be able to check something if needed.
+
+scoobydoo_filtered <- scoobydoo_movies %>%
+dplyr::select(imdb, network, title, date_aired, monster_amount, culprit_amount, suspects_amount, format)
+
+
+# Only leave the year when the movie was aired: I want to use it in my model and the precise date is not important, since I want to see how imdb ratings changed over the years.
+
+scoobydoo_filtered <- scoobydoo_filtered %>%
+  mutate(date_aired = format(as.Date(date_aired, format = "%Y-%m-%d"), "%Y"))
+
+scoobydoo_filtered <- scoobydoo_filtered %>%
+  rename(year_aired = date_aired)
+
+
+```
+
+
+```{r}
+
+# Convert numeric columns to numeric
+scoobydoo_filtered <- scoobydoo_filtered %>%
+  mutate(across(c(imdb, year_aired, monster_amount, culprit_amount, suspects_amount), as.numeric))
+
+# Checking outliers for numeric variables. There are some outliers, but those are all not errors. For instance, there are really 19 monsters in one of the cartoons.
+
+scoobydoo_filtered %>%
+  pivot_longer(cols = where(is.numeric)) %>%  
+  ggplot(aes(x = value)) +
+  geom_boxplot() +
+  facet_wrap(~name, scales = "free") + 
+  
+  coord_flip() +
+  theme_minimal()
+
+
+summary(scoobydoo_filtered)
+
+
+
+# Recode 'network' into "Warner Home Video" and "Others", because otherwise the categories are too small.
+scoobydoo_filtered <- scoobydoo_filtered %>%
+  mutate(network = if_else(network == "Warner Home Video", "Warner Home Video", "Others"))
+
+# Convert it to a factor so R sees it as dummy 
+
+scoobydoo_filtered$network <- factor(scoobydoo_filtered$network, levels = c("Warner Home Video", "Others"))
+
+# Check the new counts
+network_counts <- scoobydoo_filtered %>%
+  group_by(network) %>%
+  summarise(Count = n())
+
+print(network_counts)
+
+# I want to explore how the number of monsters affects ratings. I will recode the number of monsters into an ordinal variable, as I don't believe the exact count has a direct impact (e.g., having 6 monsters is not necessarily better or worse than having 5). Instead, I think what matters to spectators is whether there are no monsters, a few monsters, or many monsters.
+
+monster_amount_counts <- scoobydoo_filtered %>%
+  group_by(monster_amount) %>%
+  summarise(Count = n())
+print(monster_amount_counts)
+
+# Group `monster_amount` into ordinal categories
+scoobydoo_filtered <- scoobydoo_filtered %>%
+  mutate(
+    monster_amount_cat = case_when(
+      monster_amount == 0 ~ "No monsters",
+      monster_amount %in% 1:3 ~ "Few monsters",
+      monster_amount > 3 ~ "A lot of monsters"
+    ),
+    # Convert to an ordered factor
+    monster_amount_cat = factor(
+      monster_amount_cat, 
+      levels = c("No monsters","Few monsters", "A lot of monsters"), 
+      ordered = TRUE
+    )
+  )
+
+# Check the updated categories
+table(scoobydoo_filtered$monster_amount_cat)
+
+
+# Recode culprits to an ordinal variable. Same idea as with monsters
+
+culprit_amount_counts <- scoobydoo_filtered %>%
+  group_by(culprit_amount) %>%
+  summarise(Count = n())
+print(culprit_amount_counts)
+
+# Group `culprit_amount` into ordinal categories
+scoobydoo_filtered <- scoobydoo_filtered %>%
+  mutate(
+    culprit_amount_cat = case_when(
+      culprit_amount == 0 ~ "No culprits",
+      culprit_amount %in% 1:3 ~ "Few culprits",
+      culprit_amount > 3 ~ "Many culprits"
+    ),
+    # Convert to an ordered factor
+    culprit_amount_cat = factor(
+      culprit_amount_cat, 
+      levels = c("No culprits", "Few culprits", "Many culprits"), 
+      ordered = TRUE
+    )
+  )
+
+# Check the updated categories
+table(scoobydoo_filtered$culprit_amount_cat)
+
+
+# Recode suspects to an ordinal variable. Same idea.
+
+suspects_amount_counts <- scoobydoo_filtered %>%
+  group_by(suspects_amount) %>%
+  summarise(Count = n())
+print(suspects_amount_counts)
+
+# Group `suspects_amount` into ordinal categories
+scoobydoo_filtered <- scoobydoo_filtered %>%
+  mutate(
+    suspects_amount_cat = case_when(
+      suspects_amount == 0 ~ "No suspects",
+      suspects_amount %in% 1:5 ~ "Few suspects",
+      suspects_amount > 5 ~ "Many suspects"
+    ),
+    # Convert to an ordered factor
+    suspects_amount_cat = factor(
+      suspects_amount_cat, 
+      levels = c("No suspects", "Few suspects", "Many suspects"), 
+      ordered = TRUE
+    )
+  )
+
+# Check the updated categories
+table(scoobydoo_filtered$suspects_amount_cat)
+
+
+```
+
+
+```{r}
+# Bulding the model
+
+model <- lm(imdb ~ year_aired + culprit_amount_cat + monster_amount_cat + suspects_amount_cat,  data = scoobydoo_filtered)
+
+```
+
+
+```{r}
+#Model diagnostics. The assumprion of normality is  satisfied
+
+shapiro.test(residuals(model))
+
+# Histogram of residuals
+hist(residuals(model), main = "Histogram of Residuals", xlab = "Residuals")
+
+# Q-Q plot
+qqnorm(residuals(model))
+qqline(residuals(model), col = "red")
+
+
+#Checking for influential outliers
+
+cooks_dist <- cooks.distance(model)
+
+influential <- which(cooks_dist > 1)
+print(influential)
+
+
+#The assumption of linearity is satisfied for date aired and monsters
+car::crPlots(model)
+
+ggplot(scoobydoo_filtered, aes(x = monster_amount_cat, y = imdb)) +
+  stat_summary(fun = mean, geom = "bar") +
+  theme_minimal()
+
+
+#It seems that there is no significant relationship between imdb and suspects or culprits as predictors. 
+
+ggplot(scoobydoo_filtered, aes(x = culprit_amount_cat, y = imdb)) +
+  stat_summary(fun = mean, geom = "bar") +
+  theme_minimal()
+
+#Here I'd like to compare if it is better to treat culprits not as ordinal predictors, but it seems the model fit is the same. 
+
+model_ordered <- lm(imdb ~ culprit_amount_cat, data = scoobydoo_filtered)
+model_unordered <- lm(imdb ~ factor(culprit_amount_cat), data = scoobydoo_filtered) 
+
+#Same steps with suspects
+
+ggplot(scoobydoo_filtered, aes(x = suspects_amount_cat, y = imdb)) +
+  stat_summary(fun = mean, geom = "bar") +
+  theme_minimal()
+
+
+model_ordered <- lm(imdb ~ suspects_amount_cat, data = scoobydoo_filtered)
+model_unordered <- lm(imdb ~ factor(suspects_amount_cat), data = scoobydoo_filtered)
+
+AIC(model_ordered, model_unordered)
+anova(model_ordered, model_unordered)
+
+
+
+#The assumption of homoscedasticity is satisfied
+
+plot(model$fitted.values, residuals(model), 
+     main = "Residuals vs Fitted", xlab = "Fitted values", ylab = "Residuals")
+abline(h = 0, col = "red")
+
+# Breusch-Pagan test
+bptest(model)
+
+#The assumption of multicollinearity is satisfied. (VIF above 5)
+
+car::vif(model)
+```
+
+
+```{r}
+
+#Based on linearity tests I will drop culprits and suspects as predictors 
+
+complex_model <- lm(imdb ~ year_aired + network + monster_amount_cat, data = scoobydoo_filtered)
+
+
+#Model diagnostics.Repeating the steps, since predictors were dropped. 
+#The assumprion of normality is  satisfied
+
+shapiro.test(residuals(complex_model))
+
+# Histogram of residuals
+hist(residuals(complex_model), main = "Histogram of Residuals", xlab = "Residuals")
+
+# Q-Q plot
+qqnorm(residuals(complex_model))
+qqline(residuals(complex_model), col = "red")
+
+
+#Checking for influential outliers (no infulential outliers found)
+
+cooks_dist <- cooks.distance(complex_model)
+
+influential <- which(cooks_dist > 1)
+print(influential)
+
+
+#The assumption of linearity is satisfied for date aired and monsters
+car::crPlots(complex_model)
+
+ggplot(scoobydoo_filtered, aes(x = monster_amount_cat, y = imdb)) +
+  stat_summary(fun = mean, geom = "bar") +
+  theme_minimal()
+
+
+#The assumption of homoscedasticity is satisfied
+
+plot(model$fitted.values, residuals(complex_model), 
+     main = "Residuals vs Fitted", xlab = "Fitted values", ylab = "Residuals")
+abline(h = 0, col = "red")
+
+# Breusch-Pagan test
+bptest(complex_model)
+
+#The assumption of multicollinearity is satisfied. (VIF above 5)
+
+car::vif(complex_model)
+```
+
+```{r}
+
+
+# Creating simple model
+simple_model <- lm(imdb ~  year_aired + network, data = scoobydoo_filtered)
+
+
+# Comparing models using AIC, Likelihood Ratio Test, and ANOVA
+
+cat("\nAIC Comparison:\n")
+print(AIC(simple_model, complex_model))
+
+cat("\nLikelihood Ratio Test:\n")
+print(lrtest(simple_model, complex_model))
+
+cat("\nANOVA Comparison:\n")
+print(anova(simple_model, complex_model))
+
+# Creating regression equation for the complex model
+coefficients <- summary(complex_model)$coefficients
+equation <- paste0("IMDb = ", round(coefficients[1, 1], 2), " + ",
+                   paste(paste0(round(coefficients[-1, 1], 2), " * ", names(coefficients[-1, 1])),
+                         collapse = " + "))
+cat("\nRegression Equation for Complex Model:\n", equation, "\n")
+
+
+
+# Generating regression results table with Stargazer
+stargazer(simple_model, complex_model, type = "text", title = "Regression Results", star.cutoffs = c(0.05, 0.01, 0.001))
+
+# Coefficients and confidence intervals in a  table
+coeff_simple <- summary(simple_model)$coefficients
+coeff_complex <- summary(complex_model)$coefficients
+confint_simple <- confint(simple_model)
+confint_complex <- confint(complex_model)
+ 
+# Summary tables simple and complex models
+simple_table <- data.frame(
+  Predictor = rownames(coeff_simple),
+  Unstd_B = round(coeff_simple[, 1], 3),
+  Std_Error = round(coeff_simple[, 2], 3),
+  CI_Lower = round(confint_simple[, 1], 3),
+  CI_Upper = round(confint_simple[, 2], 3),
+  p_Value = round(coeff_simple[, 4], 3)
+)
+
+complex_table <- data.frame(
+  Predictor = rownames(coeff_complex),
+  Unstd_B = round(coeff_complex[, 1], 3),
+  Std_Error = round(coeff_complex[, 2], 3),
+  CI_Lower = round(confint_complex[, 1], 3),
+  CI_Upper = round(confint_complex[, 2], 3),
+  p_Value = round(coeff_complex[, 4], 3)
+)
+
+# Print results as tables
+cat("\nSimple Model Results:\n")
+kable(simple_table, caption = "Simple Model Regression Results")
+
+cat("\nComplex Model Results:\n")
+kable(complex_table, caption = "Complex Model Regression Results")
+
+
+# Weighted regression for monster_amount_cat trying to correct the differences between categories. 
+
+weights_monster <- 1 / table(scoobydoo_filtered$monster_amount_cat)[scoobydoo_filtered$monster_amount_cat]
+monster_weighted_model <- lm(imdb ~ monster_amount_cat, data = scoobydoo_filtered, weights = weights_monster)
+
+
+# Print weighted regression to check if the outpur is different.
+
+cat("\nWeighted Regression for monster_amount_cat:\n")
+print(summary(monster_weighted_model))
+
+
+# Plot1 IMDb Ratings Over Time by Network
+
+network_data <- scoobydoo_filtered %>%
+  filter(network %in% c("Warner Home Video", "Others"))
+
+ggplot(network_data, aes(x = year_aired, y = imdb, color = network)) +
+  geom_line(stat = "smooth", method = "loess", se = FALSE, size = 1) +
+  labs(
+    title = "Influence of Network on IMDb Ratings Over Time",
+    x = "Year Aired",
+    y = "IMDb Ratings",
+    color = "Network"
+  ) +
+  theme_minimal()
+
+
+# Plot 2. Effect of monster presence on IMDb ratings over time with number of observations included to address the small amount of observations in "no monsters" category.
+
+filtered_data <- scoobydoo_filtered %>%
+  filter(monster_amount_cat %in% c("Few monsters", "No monsters", "A lot of monsters"))
+
+
+filtered_data_summary <- filtered_data %>%
+  group_by(year_aired, monster_amount_cat) %>%
+  summarise(
+    avg_imdb = mean(imdb, na.rm = TRUE), 
+    count = n()
+  ) %>%
+  ungroup()
+
+
+ggplot(filtered_data_summary, aes(x = year_aired, y = avg_imdb, color = monster_amount_cat, size = count)) +
+  geom_point() +
+  geom_line(size = 1) +
+  scale_size_continuous(range = c(1, 5), name = "Number of Observations") + # Adjust point size
+  labs(
+    title = "Effect of Monster Presence on IMDb Ratings Over Time",
+    x = "Year Aired",
+    y = "Average IMDb Ratings",
+    color = "Monster Amount"
+  ) +
+  theme_minimal()
+
+
+# Results and discussion. In the simple model, which includes only year_aired and network as predictors, both variables are statistically significant. Year_aired (β = -0.035, p = 0.005) is a significant negative predictor of IMDb ratings, indicating that ratings tend to decrease over time. Network (Others) (β = -0.662, p = 0.020) suggests that movies produced by networks other than "Warner Home Video" are associated with lower IMDb ratings. The complex model incorporates an additional predictor, monster_amount_cat, which significantly improves the explanatory power of the model. Year_aired remains a significant negative predictor (β = -0.047, p < 0.001). Network (Others) continues to show a significant negative association (β = -0.547, p = 0.025). Monster_amount_cat is also a highly significant predictor, with a positive linear trend (β = 1.007, p < 0.001) and a significant quadratic effect (β = -0.666, p = 0.001). This indicates that movies with some monsters (e.g., "Few monsters") receive higher ratings, but the effect is more mixed when the number of monsters becomes excessive. The comparison of model fit statistics highlights the superiority of the complex model. The weighted regression for monster_amount_cat further supports these findings. After adjusting for differences in category sizes, the linear effect remains highly significant (β = 0.996, p < 0.001), reinforcing the importance of monster presence in influencing ratings. However the quadratic term (β = -0.312, p = 0.092) is no longer significant, pointing out that solid conclusions can't be made about the increasing number of monsters and IMDb ratings based on these results.
+
+#Discussion. While the complex model seems to provide a better fit, we cannot draw any definitive conclusions from this data yet. For now, we can only suggest that having no monsters seems to be a poor choice for Scooby-Doo movies, especially since it consistently resulted in lower ratings over the years, never even reaching 7. Additionally, it appears that having a few monsters in the cartoons is the safest approach, but further analysis is needed. We can also observe that the movies are losing popularity over time, and the Warner Home Video network seems to be more successful.
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
